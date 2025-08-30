@@ -147,14 +147,14 @@ def lang_sort_key(lang: Optional[str]) -> int:
 # ---------- config ----------
 
 DEFAULT_RULES = [
-    {"pattern": r"\bCM\d*\b",      "category": "trailers",  "label_from": "match", "case": "upper"},
-    {"pattern": r"\bPV\d*\b",      "category": "trailers",  "label_from": "match", "case": "upper"},
-    {"pattern": r"\bPreview\d*\b", "category": "trailers",  "label_from": "match", "case": "match"},
-    {"pattern": r"\bTrailer\b",    "category": "trailers",  "label_from": "match", "case": "match"},
-    {"pattern": r"\bNCOP\b",       "category": "clips",     "label_from": "match", "case": "upper"},
-    {"pattern": r"\bNCED\b",       "category": "clips",     "label_from": "match", "case": "upper"},
-    {"pattern": r"\bMenu\d+\b",    "category": "other",     "label_from": "match", "case": "match"},
-    {"pattern": r"\bSP\d+\b",      "category": "shorts",    "label_from": "match", "case": "upper"}
+    {"pattern": r"\bCM\d*\b",      "category": "trailers"},
+    {"pattern": r"\bPV\d*\b",      "category": "trailers"},
+    {"pattern": r"\bPreview\d*\b", "category": "trailers"},
+    {"pattern": r"\bTrailer\b",    "category": "trailers"},
+    {"pattern": r"\bNCOP\b",       "category": "clips"},
+    {"pattern": r"\bNCED\b",       "category": "clips"},
+    {"pattern": r"\bMenu\d+\b",    "category": "other"},
+    {"pattern": r"\bSP\d+\b",      "category": "shorts"}
 ]
 DEFAULT_FALLBACK = "extras"
 
@@ -196,18 +196,6 @@ def validate_category(cat: str) -> str:
     return cat if cat in JF_CATEGORIES else "extras"
 
 # ---------- extra classifier ----------
-
-
-def _make_label(m: re.Match, rule: Dict[str, Any]) -> str:
-    if "label" in rule and rule["label"]:
-        return str(rule["label"])
-    if rule.get("label_from") == "match":
-        text = m.group(0)
-        case = rule.get("case", "match")
-        if case == "upper": return text.upper()
-        if case == "lower": return text.lower()
-        return text
-    return m.group(0)
 
 # ===== 替换原函数：从文件名中猜测 fallback token（取第一个有效的 []） =====
 def guess_extra_token_from_name(name: str) -> str:
