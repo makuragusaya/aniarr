@@ -34,9 +34,6 @@ This script is particularly suited for anime releases from **VCB-Studio**
 - **rules**: Ordered regex rules for classifying extras.
   - **pattern:** Python regular expression (escape properly in JSON).
   - **category:** Maps to a Jellyfin extra category; invalid values fall back to `extras`.
-  - **label_from:** Usually `"match"`; uses the matched text from the regex.
-  - **case:** Case rule for the label: `upper`, `lower`, or `match`.
-  - **label:** Fixed token; if set, it overrides `label_from` and `case`.
 - **fallback_category**: Default category if nothing matches.
 
 > File naming for extras: output uses `<token> + extension`, e.g., `CM01.mkv`, `SP02.mkv`.
@@ -46,11 +43,11 @@ Default `aniarr.conf`:
     {
       "extras_scope": "series",
       "rules": [
-        {"pattern": "\\bCM\\d*\\b",      "category": "trailers", "label_from": "match", "case": "upper"},
-        {"pattern": "\\bPV\\d*\\b",      "category": "trailers", "label_from": "match", "case": "upper"},
-        {"pattern": "\\bNCOP\\b",        "category": "clips",    "label_from": "match", "case": "upper"},
-        {"pattern": "\\bNCED\\b",        "category": "clips",    "label_from": "match", "case": "upper"},
-        {"pattern": "\\bSP\\d+\\b",      "category": "shorts",   "label_from": "match", "case": "upper"}
+        {"pattern": "\\bCM\\d*\\b",      "category": "trailers"},
+        {"pattern": "\\bPV\\d*\\b",      "category": "trailers"},
+        {"pattern": "\\bNCOP\\b",        "category": "clips"},
+        {"pattern": "\\bNCED\\b",        "category": "clips"},
+        {"pattern": "\\bSP\\d+\\b",      "category": "shorts"}
       ],
       "fallback_category": "extras"
     }
