@@ -10,6 +10,20 @@ from collections import defaultdict, Counter
 VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v'}
 SUB_EXTS   = {'.ass', '.srt', '.vtt', '.sub', '.ssa', '.sup'}
 
+LANG_ALIASES = {
+    # 常见
+    "sc": "zh-CN", "chs": "zh-CN", "zhs": "zh-CN", "gb": "zh-CN", "cn": "zh-CN",
+    "tc": "zh-TW", "cht": "zh-TW", "zht": "zh-TW", "big5": "zh-TW", "tw": "zh-TW",
+    "jp": "ja", "ja": "ja",
+    "en": "en", "eng": "en",
+    "ko": "ko", "kor": "ko",
+    # 扩展：jpsc/jptc 通常表示 “日+简 / 日+繁”的双语字幕
+    # 外部字幕文件名里只能放一个语言码，这里按 **中文为主阅读语言** 落地：
+    "jpsc": "zh-CN",
+    "jptc": "zh-TW",
+}
+
+
 JF_CATEGORIES = {
     'behind the scenes', 'deleted scenes', 'interviews', 'scenes', 'samples',
     'shorts', 'featurettes', 'clips', 'other', 'extras', 'trailers'
@@ -37,19 +51,27 @@ def strip_all_brackets(s: str) -> str:
 
 def normalize_lang(name: str) -> Optional[str]:
     lower = name.lower()
-    mapping = {
-        'chs':'zh-CN','sc':'zh-CN','simp':'zh-CN','chi':'zh-CN',
-        'cht':'zh-TW','tc':'zh-TW','trad':'zh-TW',
-        'zh-cn':'zh-CN','zh-sc':'zh-CN','zh_sc':'zh-CN',
-        'zh-tw':'zh-TW','zh-tc':'zh-TW','zh_tc':'zh-TW',
-        'chinese (simplified)':'zh-CN','chinese (traditional)':'zh-TW',
-        'chinese':'zh-CN'
-    }
-    tokens = re.findall(r'[\._-]((?:zh[-_ ]?(?:cn|tw)|chs|cht|sc|tc|chi|chinese(?:\s*\(.*?\))?))(?:[_\-](\d+))?', lower)
-    if not tokens: return None
-    raw, idx = tokens[-1]
-    raw = raw.strip()
-    norm = mapping.get(raw) or ('zh-TW' if raw.startswith('chinese') and 'trad' in raw else ('zh-CN' if raw.startswith('chinese') else None))
+    # 允许末尾形式： .jpsc.ass / .jptc.ass / .sc.ass / .zh-cn.srt / ... 也允许文件名中部的连接符
+    # 捕获 token 和可选的编号，比如 -2： *.zh-cn-2.ass
+    m = re.search(r'[\._-]((?:zh[-_ ]?(?:cn|tw)|chs|cht|sc|tc|zhs|zht|gb|cn|tw|ja|jp|en|eng|ko|kor|jpsc|jptc))(?:[-_](\d+))?(?=\.(ass|srt|vtt|ssa|sup)\b)', lower, flags=re.I)
+    if not m:
+        # 兼容旧规则（在名字中任何位置出现语言码）
+        m = re.search(r'[\._-]((?:zh[-_ ]?(?:cn|tw)|chs|cht|sc|tc|zhs|zht|gb|cn|tw|ja|jp|en|eng|ko|kor|jpsc|jptc))(?:[_\-](\d+))?', lower, flags=re.I)
+        if not m:
+            return None
+
+    raw = m.group(1).strip()
+    idx = m.group(2)
+
+    norm = LANG_ALIASES.get(raw)
+    if not norm and raw.startswith('zh'):
+        # 规范化 zh-cn/zh-tw 大小写
+        parts = re.split(r'[-_ ]+', raw)
+        if len(parts) == 2 and parts[0] == 'zh' and parts[1] in ('cn','tw'):
+            norm = f"zh-{parts[1].upper()}"
+    if not norm and raw in ('ja','jp','en','eng','ko','kor'):
+        norm = {'ja':'ja','jp':'ja','en':'en','eng':'en','ko':'ko','kor':'ko'}[raw]
+
     return f"{norm}_{idx}" if (norm and idx) else norm
 
 def apply_lang(final_name: str, src_name: str) -> str:
@@ -175,6 +197,7 @@ def validate_category(cat: str) -> str:
 
 # ---------- extra classifier ----------
 
+
 def _make_label(m: re.Match, rule: Dict[str, Any]) -> str:
     if "label" in rule and rule["label"]:
         return str(rule["label"])
@@ -186,15 +209,64 @@ def _make_label(m: re.Match, rule: Dict[str, Any]) -> str:
         return text
     return m.group(0)
 
+# ===== 替换原函数：从文件名中猜测 fallback token（取第一个有效的 []） =====
+def guess_extra_token_from_name(name: str) -> str:
+    """
+    未命中任何规则时，用文件名中的第一个“有意义”的 [ ... ] 作为 token。
+    跳过开头字幕组 [XxxSub]，以及技术标签 [Ma10p_1080p] / [x265_flac] / [1080p] 等。
+    """
+    stem = str(Path(name).with_suffix(''))
+
+    # 抓出所有 [ ... ] 段
+    bracket_parts = re.findall(r'\[([^\[\]]+)\]', stem)
+
+    # 技术标签黑名单（可按需扩充）
+    tech_pat = re.compile(
+        r'^(?:'
+        r'Ma\d+p_[^ ]+|'
+        r'(?:x|h)26[45].*|'
+        r'hevc|avc|h264|h265|'
+        r'(?:10|8)bit|'
+        r'web[- ]?dl|blu[- ]?ray|bdrip|remux|source|'
+        r'1080p|2160p|720p|4k|hdr|dv|'
+        r'flac|aac|opus|mp3|'
+        r'fonts?'
+        r')$',
+        re.IGNORECASE
+    )
+
+    # 第一个有效候选：跳过第一个看起来是“字幕组/作者”的块 & 技术块
+    for idx, part in enumerate(bracket_parts):
+        p = part.strip()
+        # 开头的 [XxxSub]/[VCB-Studio] 等视为“字幕组”
+        if idx == 0 and re.search(r'(sub|vcb|group|studio|rip|encode)', p, flags=re.I):
+            continue
+        if tech_pat.match(p):
+            continue
+        # 命中第一个有效 bracket，直接用它
+        return p
+
+    # 没有 [] 候选：退而求其次，用去技术标签后的 stem
+    cleaned = re.sub(r'\[[^\[\]]+\]', ' ', stem)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned or "EXTRA"
+
+# === 替换：分类器先取 token，再用 token 匹配规则；重命名始终用 token ===
 def classify_extra(name: str, rules: List[Dict[str, Any]], fallback: str) -> Tuple[str, str]:
+    """
+    返回 (category, token)。token 总是 guess 自文件名；
+    category 用 token 去匹配 rules，首条命中即用其 category，否则 fallback。
+    """
+    token = guess_extra_token_from_name(name)
     for rule in rules:
         pat = rule.get("pattern")
-        cat = validate_category(str(rule.get("category", "")))
-        if not pat: continue
-        m = re.search(pat, name, flags=re.I)
-        if m:
-            return cat, _make_label(m, rule)
-    return validate_category(fallback), "EXTRA"
+        if not pat:
+            continue
+        if re.search(pat, token, flags=re.I):
+            # 只取分类，不再用规则来改 token（保持 token = guess）
+            cat = validate_category(str(rule.get("category", "")))
+            return cat, token
+    return validate_category(fallback), token
 
 # ---------- plan items ----------
 
@@ -388,18 +460,47 @@ def print_header(src_dir: Path, dst_root: Path, mode: str,
     print(f"Files       : {files_count} planned (sorted)")
     print("====================\n")
 
+def _prefix_for_item(it) -> str:
+    if it.kind == 'EXTRA':
+        return f"[EXTRA/{it.extra_folder}]"
+    elif it.kind == 'VID':
+        return "[VID]"
+    else:
+        return "[SUB]"
+
+def _calc_indent_for_item(prefix: str, src_name: str) -> int:
+    """
+    动态计算第二行缩进，使 `->` 对齐到：
+    <prefix> <[Group]> 之后（再加一个空格），然后整体再 -2。
+    """
+    # 匹配开头字幕组 [ ... ]，例如：[XKsub&VCB-Studio]
+    m = re.match(r'\[[^\]]+\]', src_name)
+    group_end = m.end() if m else 0  # 没组名则为 0
+    indent = len(prefix) + 1 + group_end + 1 - 3
+    if indent < 2:
+        indent = max(2, len(prefix) + 1)  # 合理下限
+    return indent
+
 def print_plan(items: List[PlanItem], dst_root: Path):
-    w = width()
+    term_w = width()
     for it in items:
-        try: rel = it.dst.relative_to(dst_root)
-        except Exception: rel = it.dst
-        if it.kind == 'EXTRA':
-            line = f"[EXTRA/{it.extra_folder}] -> {rel}"
-        elif it.kind == 'VID':
-            line = f"[VID] S{it.season:02d}E{it.ep:02d} -> {rel}"
-        else:
-            line = f"[SUB] S{it.season:02d}E{it.ep:02d} -> {rel}"
-        print(wrap_line(line, w))
+        prefix = _prefix_for_item(it)
+
+        # 目标相对路径
+        try:
+            rel = it.dst.relative_to(dst_root)
+        except Exception:
+            rel = it.dst
+
+        # 第一行：<prefix> <原文件名>
+        head = f"{prefix} {it.src.name}"
+        print(wrap_line(head, term_w))
+
+        # 第二行：按该条目单独计算缩进，并对后续折行保持该缩进
+        indent_cols = _calc_indent_for_item(prefix, it.src.name)
+        indent_spaces = " " * indent_cols
+        tail = f"{indent_spaces}-> {rel}"
+        print(wrap_line(tail, term_w, indent=indent_cols))
 
 def print_skipped(skipped: Dict[str, List[str]]):
     if not skipped: return
